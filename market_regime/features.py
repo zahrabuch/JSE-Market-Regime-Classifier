@@ -1,8 +1,10 @@
 import numpy as np
+import pandas as pd
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
 from ta.volatility import AverageTrueRange
 from ta.volume import OnBalanceVolumeIndicator
+from sklearn.preprocessing import StandardScaler
 
 #FEATURES
 def create_features(df):
@@ -63,3 +65,40 @@ def create_features(df):
     df = df.dropna().reset_index(drop=True)
 
     return df
+
+
+def scale_features(df):
+    features = [
+        "Dist_SMA20",
+        "Dist_SMA50",
+        "Dist_SMA100",
+        "Dist_SMA200",
+        "Daily Return",
+        "5 Day Return",
+        "10 Day Return",
+        "20 Day Return",
+        "RSI",
+        "MACD",
+        "MACD_Sig",
+        "Volatility 20",
+        "ATR",
+        "HL Range",
+        "OC Return",
+        "Gap",
+        "Body",
+        "Upper Wick",
+        "Lower Wick",
+        "Relative Volume",
+        "OBV"
+    ]
+
+    X = df[features]
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    X_scaled = pd.DataFrame(
+        X_scaled,
+        columns=features,
+        index=df.index
+    )
+
+    return X_scaled
