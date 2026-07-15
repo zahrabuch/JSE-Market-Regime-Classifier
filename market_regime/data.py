@@ -63,12 +63,12 @@ def clean_data(df):
     df = df.sort_values("Date").reset_index(drop=True)
     df = df.set_index("Date")
 
-    df["Daily Return"] = df["Price"].pct_change()
     df = df.rename(columns={"Price": "Close"})
 
     return df
 
 def create_features(df):
+    df["Daily Return"] = df["Close"].pct_change()
     df["5 Day Return"] = df["Close"].pct_change(5)
     df["10 Day Return"] = df["Close"].pct_change(10)
     df["20 Day Return"] = df["Close"].pct_change(20)
@@ -130,27 +130,16 @@ def create_features(df):
 
 def scale_features(df):
     features = [
-        "Dist_SMA20",
-        "Dist_SMA50",
-        "Dist_SMA100",
-        "Dist_SMA200",
         "Daily Return",
         "5 Day Return",
-        "10 Day Return",
         "20 Day Return",
+        "Dist_SMA20",
+        "Dist_SMA200",
         "RSI",
         "MACD",
-        "MACD_Sig",
         "Volatility 20",
         "ATR",
-        "HL Range",
-        "OC Return",
-        "Gap",
-        "Body",
-        "Upper Wick",
-        "Lower Wick",
-        "Relative Volume",
-        "OBV"
+        "Relative Volume"
     ]
 
     X = df[features]
@@ -170,7 +159,7 @@ def scale_features(df):
     return X_scaled
 
 
-def create_gmm():
+def create_gmm(scaled_df):
     n_clusters = 4
 
     gmm = GaussianMixture(
@@ -179,11 +168,56 @@ def create_gmm():
         random_state=42
     )
 
+    gmm.fit(scaled_df)
+    df["Regime"] = gmm.predict(scaled_df)
+    df.groupby("Regime").mean(numeric_only=True)
+
+
 df = load_csv()
-print(df.info())
 clean_df = clean_data(df)
-print(clean_df.info())
+clean_df = clean_df[
+    clean_df["Close"].between(
+        clean_df["Close"].quantile(0.01),
+        clean_df["Close"].quantile(0.99)
+    )
+]
 feat_df = create_features(clean_df)
-print(feat_df.info())
 scaled_feat = scale_features(feat_df)
 print(scaled_feat.head())
+bics = []
+
+for k in range(3, 6):
+    gmm = GaussianMixture(n_components=k, random_state=42)
+    labels = gmm.fit_predict(scaled_feat)
+
+    feat_df["Regime"] = labels
+
+    print(feat_df["Regime"].value_counts())
+    print(feat_df.groupby("Regime")[[
+        "Daily Return",
+        "Volatility 20",
+        "RSI",
+        "Dist_SMA200"
+    ]].mean())
+
+print(bics)
+
+gmm = GaussianMixture(
+        n_components=4,
+        covariance_type="full",
+        random_state=42
+    )
+
+gmm.fit(scaled_feat)
+feat_df["Regime"] = gmm.predict(scaled_feat)
+print(feat_df.groupby("Regime")[[
+    "Daily Return",
+    "Volatility 20",
+    "RSI",
+    "ATR",
+    "Dist_SMA200",
+    "Relative Volume"
+]].mean())
+
+joblib.dump(gmm, "market_regime_gmm.pkl")
+joblib.dump(scaler, "scaler.pkl")
