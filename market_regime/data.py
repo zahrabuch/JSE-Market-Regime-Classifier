@@ -220,4 +220,4 @@ print(feat_df.groupby("Regime")[[
 ]].mean())
 
 joblib.dump(gmm, "market_regime_gmm.pkl")
-joblib.dump(scaler, "scaler.pkl")
+#joblib.dump(scaler, "scaler.pkl")
