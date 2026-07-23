@@ -1,17 +1,5 @@
 """
 Market regime detection for the JSE All Jamaican Composite index.
-
-Pipeline:
-    1. Load + clean raw CSV
-    2. Engineer technical/volatility/volume features
-    3. Scale features
-    4. Fit a Gaussian Mixture Model, selecting k via BIC
-    5. Persist scaler + model for reuse on new data
-
-Run as a script to fit and save artifacts:
-    python regime_pipeline.py
-
-Use `predict_regime()` afterwards to score new data with the saved artifacts.
 """
 
 from __future__ import annotations
@@ -35,10 +23,6 @@ logger = logging.getLogger(__name__)
 DATA_PATH = Path("JSE All Jamaican Composite Historical Data.csv")
 SCALER_PATH = Path("scaler.pkl")
 MODEL_PATH = Path("market_regime_gmm.pkl")
-
-# Number of regimes to fit. BIC is still computed and logged as a diagnostic
-# (see select_k_by_bic) so you can sanity-check this choice, but it does not
-# override it -- the final model always uses N_REGIMES.
 N_REGIMES = 4
 
 FEATURE_COLUMNS = [
@@ -55,9 +39,7 @@ FEATURE_COLUMNS = [
 ]
 
 
-# ---------------------------------------------------------------------------
 # Loading & cleaning
-# ---------------------------------------------------------------------------
 
 def load_csv(path: Path = DATA_PATH) -> pd.DataFrame:
     return pd.read_csv(path)
@@ -111,9 +93,8 @@ def winsorize_close(df: pd.DataFrame, lower_q: float = 0.01, upper_q: float = 0.
     return df
 
 
-# ---------------------------------------------------------------------------
 # Feature engineering
-# ---------------------------------------------------------------------------
+
 
 def create_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -162,9 +143,9 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     return df.dropna().reset_index(drop=False)
 
 
-# ---------------------------------------------------------------------------
+
 # Scaling
-# ---------------------------------------------------------------------------
+
 
 def fit_scaler(df: pd.DataFrame, feature_columns: list[str] = FEATURE_COLUMNS) -> tuple[pd.DataFrame, StandardScaler]:
     """Fit a StandardScaler on the given features and return (scaled_df, scaler)."""
@@ -175,9 +156,7 @@ def fit_scaler(df: pd.DataFrame, feature_columns: list[str] = FEATURE_COLUMNS) -
     return X_scaled, scaler
 
 
-# ---------------------------------------------------------------------------
 # Model selection + fitting
-# ---------------------------------------------------------------------------
 
 def bic_diagnostic(X_scaled: pd.DataFrame, k_range: range = range(3, 7)) -> dict[int, float]:
     """
@@ -213,9 +192,7 @@ def summarize_regimes(df: pd.DataFrame, regime_labels: np.ndarray) -> pd.DataFra
     return df.groupby("Regime")[summary_cols].mean()
 
 
-# ---------------------------------------------------------------------------
 # Inference on new data
-# ---------------------------------------------------------------------------
 
 def predict_regime(
     new_raw_df: pd.DataFrame,
