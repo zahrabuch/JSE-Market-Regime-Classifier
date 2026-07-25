@@ -204,63 +204,74 @@ clean_df = clean_df[
 
 feat_df = create_features(clean_df)
 
-X_scaled, scaler = scale_features(feat_df)
+split = int(len(feat_df) * 0.8)
 
-print(X_scaled.head())
+train = feat_df.iloc[:split].copy()
+test = feat_df.iloc[split:].copy()
+
+features = [
+    "Daily Return",
+    "5 Day Return",
+    "20 Day Return",
+    "Dist_SMA20",
+    "Dist_SMA200",
+    "RSI",
+    "MACD",
+    "Volatility 20",
+    "ATR",
+    "Relative Volume"
+]
+
+scaler = StandardScaler()
+
+X_train_scaled = pd.DataFrame(
+    scaler.fit_transform(train[features]),
+    columns=features,
+    index=train.index
+)
+
+X_test_scaled = pd.DataFrame(
+    scaler.transform(test[features]),
+    columns=features,
+    index=test.index
+)
+
+joblib.dump(scaler, "scaler.pkl")
 
 bics = []
 
 for k in range(3, 6):
 
-    gmm = GaussianMixture(
+    temp = GaussianMixture(
         n_components=k,
+        covariance_type="full",
         random_state=42
     )
 
-    labels = gmm.fit_predict(X_scaled)
+    temp.fit(X_train_scaled)
 
-    feat_df["Regime"] = labels
-
-    print(feat_df["Regime"].value_counts())
-
-    print(
-        feat_df.groupby("Regime")[[
-            "Daily Return",
-            "Volatility 20",
-            "RSI",
-            "Dist_SMA200"
-        ]].mean()
-    )
-
-    bics.append(gmm.bic(X_scaled))
+    bics.append(temp.bic(X_train_scaled))
 
 print(bics)
 
-gmm = create_gmm(X_scaled)
-
-feat_df["Regime"] = gmm.predict(X_scaled)
-
-print(
-    feat_df.groupby("Regime")[[
-        "Daily Return",
-        "Volatility 20",
-        "RSI",
-        "ATR",
-        "Dist_SMA200",
-        "Relative Volume"
-    ]].mean()
+gmm = GaussianMixture(
+    n_components=4,
+    covariance_type="full",
+    random_state=42
 )
 
+gmm.fit(X_train_scaled)
+
+train["Regime"] = gmm.predict(X_train_scaled)
+test["Regime"] = gmm.predict(X_test_scaled)
+
 joblib.dump(gmm, "market_regime_gmm.pkl")
-joblib.dump(scaler, "scaler.pkl")
 
-df = feat_df.copy()
-
-stats = df.groupby("Regime").agg({
-    "Daily Return": "mean",
-    "Volatility 20": "mean",
-    "RSI": "mean",
-    "Dist_SMA200": "mean"
+stats = train.groupby("Regime").agg({
+    "Daily Return":"mean",
+    "Volatility 20":"mean",
+    "RSI":"mean",
+    "Dist_SMA200":"mean"
 })
 
 bull = stats["Daily Return"].idxmax()
@@ -277,25 +288,31 @@ sideways = remaining[0]
 momentum = remaining[1]
 
 regime_names = {
-    bull: "Bull",
-    bear: "Bear",
-    sideways: "Sideways",
-    momentum: "Momentum"
+    bull:"Bull",
+    bear:"Bear",
+    sideways:"Sideways",
+    momentum:"Momentum"
 }
 
-df["Regime Name"] = df["Regime"].map(regime_names)
+train["Regime Name"] = train["Regime"].map(regime_names)
+test["Regime Name"] = test["Regime"].map(regime_names)
 
-df["Classifier Regime"] = df["Regime Name"].replace({
-    "Bull": "Bullish",
-    "Momentum": "Bullish"
+train["Classifier Regime"] = train["Regime Name"].replace({
+    "Bull":"Bullish",
+    "Momentum":"Bullish"
 })
 
-summary = df.groupby("Regime Name").agg({
-    "Daily Return": ["mean", "std"],
-    "Volatility 20": "mean",
-    "RSI": "mean",
-    "Dist_SMA200": "mean",
-    "Close": "count"
+test["Classifier Regime"] = test["Regime Name"].replace({
+    "Bull":"Bullish",
+    "Momentum":"Bullish"
+})
+
+summary = train.groupby("Regime Name").agg({
+    "Daily Return":["mean","std"],
+    "Volatility 20":"mean",
+    "RSI":"mean",
+    "Dist_SMA200":"mean",
+    "Close":"count"
 })
 
 print(summary)
@@ -303,8 +320,8 @@ print(summary)
 summary.to_csv("regime_summary.csv")
 
 fig = px.scatter(
-    df,
-    x= df.index,
+    pd.concat([train, test]),
+    x=pd.concat([train, test]).index,
     y="Close",
     color="Regime Name",
     title="Market Regimes"
@@ -313,12 +330,10 @@ fig = px.scatter(
 fig.show()
 
 transition = pd.crosstab(
-    df["Regime Name"],
-    df["Regime Name"].shift(-1),
+    train["Regime Name"],
+    train["Regime Name"].shift(-1),
     normalize="index"
 )
-
-print(transition)
 
 transition.to_csv("transition_matrix.csv")
 
@@ -334,52 +349,50 @@ fig.update_layout(title="Regime Transition Matrix")
 
 fig.show()
 
-df["Next Regime"] = df["Classifier Regime"].shift(-1)
+train["Next Regime"] = train["Classifier Regime"].shift(-1)
+test["Next Regime"] = test["Classifier Regime"].shift(-1)
 
-df = df.dropna()
-
-features = [
-    "Daily Return",
-    "5 Day Return",
-    "20 Day Return",
-    "Volatility 20",
-    "RSI",
-    "MACD",
-    "Dist_SMA20",
-    "Dist_SMA200",
-    "Relative Volume"
-]
-
-X = df[features]
-y = df["Next Regime"]
-
-split = int(len(df) * 0.8)
-
-X_train = X.iloc[:split]
-X_test = X.iloc[split:]
-
-y_train = y.iloc[:split]
-y_test = y.iloc[split:]
+train = train.dropna()
+test = test.dropna()
 
 rf = RandomForestClassifier(
     n_estimators=500,
+    class_weight="balanced",
     random_state=42
 )
 
-rf.fit(X_train, y_train)
+rf.fit(
+    train[features],
+    train["Next Regime"]
+)
 
-pred = rf.predict(X_test)
+test["Prediction"] = rf.predict(
+    test[features]
+)
 
-print(classification_report(y_test, pred))
-print(confusion_matrix(y_test, pred))
-print("Accuracy:", accuracy_score(y_test, pred))
+print(classification_report(
+    test["Next Regime"],
+    test["Prediction"]
+))
+
+print(confusion_matrix(
+    test["Next Regime"],
+    test["Prediction"]
+))
+
+print(
+    "Accuracy:",
+    accuracy_score(
+        test["Next Regime"],
+        test["Prediction"]
+    )
+)
 
 importance = (
     pd.Series(
         rf.feature_importances_,
         index=features
-    )
-    .sort_values()
+    ).sort_values()
 )
 
 fig = px.bar(
@@ -390,41 +403,43 @@ fig = px.bar(
 
 fig.show()
 
-joblib.dump(gmm, "gmm.pkl")
-joblib.dump(scaler, "scaler.pkl")
 joblib.dump(rf, "next_regime_classifier.pkl")
 
-bull_name = summary["Daily Return"]["mean"].idxmax()
-
 weights = {
-    "Bull": 1.0,
-    "Momentum": 0.75,
-    "Sideways": 0.25,
-    "Bear": 0.0
+    "Bullish":1.0,
+    "Sideways":0.25,
+    "Bear":0.0
 }
 
-df["Strategy Return"] = (
-    df["Daily Return"] *
-    df["Regime Name"].map(weights)
+test["Weight"] = test["Prediction"].map(weights)
+
+test["Strategy Return"] = (
+    test["Daily Return"] *
+    test["Weight"]
 )
 
-df["Buy and Hold"] = (1 + df["Daily Return"]).cumprod()
-df["Strategy Equity"] = (1 + df["Strategy Return"]).cumprod()
+test["Buy and Hold"] = (
+    1 + test["Daily Return"]
+).cumprod()
+
+test["Strategy Equity"] = (
+    1 + test["Strategy Return"]
+).cumprod()
 
 fig = go.Figure()
 
 fig.add_trace(
     go.Scatter(
-        x=df.index,
-        y=df["Buy and Hold"],
+        x=test.index,
+        y=test["Buy and Hold"],
         name="Buy & Hold"
     )
 )
 
 fig.add_trace(
     go.Scatter(
-        x=df.index,
-        y=df["Strategy Equity"],
+        x=test.index,
+        y=test["Strategy Equity"],
         name="Regime Strategy"
     )
 )
